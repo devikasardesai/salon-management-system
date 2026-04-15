@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Helpers ────────────────────────────────────────────────
 
-def get_jwt_secret():
+def get_jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
 
 def hash_password(password: str) -> str:
@@ -50,19 +50,19 @@ def create_refresh_token(user_id: str) -> str:
     payload = {"sub": user_id, "exp": datetime.now(timezone.utc) + timedelta(days=7), "type": "refresh"}
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
-def oid(val):
+def oid(val: object) -> str:
     return str(val) if not isinstance(val, str) else val
 
-def serialize_doc(doc):
+def serialize_doc(doc: Optional[dict]) -> Optional[dict]:
     if doc is None:
         return None
     doc["id"] = str(doc.pop("_id"))
     return doc
 
-def serialize_list(docs):
+def serialize_list(docs: List[dict]) -> List[dict]:
     return [serialize_doc(d) for d in docs]
 
-async def get_current_user(request: Request):
+async def get_current_user(request: Request) -> dict:
     token = request.cookies.get("access_token")
     if not token:
         auth_header = request.headers.get("Authorization", "")
@@ -84,6 +84,16 @@ async def get_current_user(request: Request):
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+async def find_booking_or_404(booking_id: str) -> dict:
+    """Safely find a booking by ID or raise 404."""
+    try:
+        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return booking
 
 # ─── Models ─────────────────────────────────────────────────
 
@@ -177,7 +187,7 @@ class MockPaymentInput(BaseModel):
 # ─── Auth ───────────────────────────────────────────────────
 
 @api_router.post("/auth/login")
-async def login(input: LoginInput, response: Response):
+async def login(input: LoginInput, response: Response) -> dict:
     email = input.email.strip().lower()
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(input.password, user["password_hash"]):
@@ -190,7 +200,7 @@ async def login(input: LoginInput, response: Response):
     return {"id": uid, "email": user["email"], "name": user.get("name", ""), "role": user.get("role", "admin"), "token": access}
 
 @api_router.post("/auth/register")
-async def register(input: RegisterInput, response: Response):
+async def register(input: RegisterInput, response: Response) -> dict:
     email = input.email.strip().lower()
     existing = await db.users.find_one({"email": email})
     if existing:
@@ -231,26 +241,26 @@ async def register(input: RegisterInput, response: Response):
     return {"id": uid, "email": email, "name": input.name.strip(), "role": "admin", "token": access}
 
 @api_router.post("/auth/logout")
-async def logout(response: Response):
+async def logout(response: Response) -> dict:
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/")
     return {"message": "Logged out"}
 
 @api_router.get("/auth/me")
-async def get_me(user=Depends(get_current_user)):
+async def get_me(user=Depends(get_current_user)) -> dict:
     return {"id": user["_id"], "email": user["email"], "name": user.get("name", ""), "role": user.get("role", "admin")}
 
 # ─── Settings ───────────────────────────────────────────────
 
 @api_router.get("/settings")
-async def get_settings():
+async def get_settings() -> dict:
     s = await db.settings.find_one({}, {"_id": 0})
     if not s:
         s = {"business_name": "LuxeSalon", "business_email": "", "business_webpage": "", "theme": "earthy-minimal"}
     return s
 
 @api_router.put("/settings")
-async def update_settings(inp: SettingsInput, user=Depends(get_current_user)):
+async def update_settings(inp: SettingsInput, user=Depends(get_current_user)) -> dict:
     data = inp.model_dump()
     await db.settings.update_one({}, {"$set": data}, upsert=True)
     return data
@@ -258,14 +268,14 @@ async def update_settings(inp: SettingsInput, user=Depends(get_current_user)):
 # ─── Profile ────────────────────────────────────────────────
 
 @api_router.get("/profile")
-async def get_profile(user=Depends(get_current_user)):
+async def get_profile(user=Depends(get_current_user)) -> dict:
     p = await db.profiles.find_one({"user_id": user["_id"]}, {"_id": 0})
     if not p:
         p = {"user_id": user["_id"], "name": user.get("name", ""), "email": user.get("email", ""), "payment_plan": "Free", "payment_details": ""}
     return p
 
 @api_router.put("/profile")
-async def update_profile(inp: ProfileInput, user=Depends(get_current_user)):
+async def update_profile(inp: ProfileInput, user=Depends(get_current_user)) -> dict:
     data = inp.model_dump()
     data["user_id"] = user["_id"]
     await db.profiles.update_one({"user_id": user["_id"]}, {"$set": data}, upsert=True)
@@ -274,7 +284,7 @@ async def update_profile(inp: ProfileInput, user=Depends(get_current_user)):
 # ─── Locations ──────────────────────────────────────────────
 
 @api_router.get("/locations")
-async def get_locations():
+async def get_locations() -> List[dict]:
     locs = await db.locations.find({}).to_list(1000)
     return serialize_list(locs)
 
@@ -302,7 +312,7 @@ async def delete_location(location_id: str, user=Depends(get_current_user)):
 # ─── Services ───────────────────────────────────────────────
 
 @api_router.get("/services")
-async def get_services():
+async def get_services() -> List[dict]:
     svcs = await db.services.find({}).to_list(1000)
     return serialize_list(svcs)
 
@@ -336,7 +346,7 @@ async def delete_service(service_id: str, user=Depends(get_current_user)):
 # ─── Employees ──────────────────────────────────────────────
 
 @api_router.get("/employees")
-async def get_employees():
+async def get_employees() -> List[dict]:
     emps = await db.employees.find({}).to_list(1000)
     return serialize_list(emps)
 
@@ -364,7 +374,7 @@ async def delete_employee(employee_id: str, user=Depends(get_current_user)):
 # ─── Bookings ───────────────────────────────────────────────
 
 @api_router.get("/bookings")
-async def get_bookings(location_id: Optional[str] = None):
+async def get_bookings(location_id: Optional[str] = None) -> List[dict]:
     query = {}
     if location_id:
         query["location_id"] = location_id
@@ -406,8 +416,8 @@ async def create_booking(inp: BookingInput):
     # Store mock notification records
     data["notifications"] = [
         {"type": "confirmation", "status": "sent", "message": f"Booking confirmed for {data['date']} at {data['time_slot']}"},
-        {"type": "reminder_1hr", "status": "scheduled", "message": f"Reminder: Your appointment is in 1 hour"},
-        {"type": "reminder_30min", "status": "scheduled", "message": f"Reminder: Your appointment is in 30 minutes"}
+        {"type": "reminder_1hr", "status": "scheduled", "message": "Reminder: Your appointment is in 1 hour"},
+        {"type": "reminder_30min", "status": "scheduled", "message": "Reminder: Your appointment is in 30 minutes"}
     ]
     result = await db.bookings.insert_one(data)
     data["id"] = str(result.inserted_id)
@@ -415,23 +425,13 @@ async def create_booking(inp: BookingInput):
     return data
 
 @api_router.get("/bookings/{booking_id}")
-async def get_booking(booking_id: str):
-    try:
-        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
-    except Exception:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+async def get_booking(booking_id: str) -> dict:
+    booking = await find_booking_or_404(booking_id)
     return serialize_doc(booking)
 
 @api_router.put("/bookings/{booking_id}/cancel")
-async def cancel_booking(booking_id: str, inp: CancelInput = None, user=None):
-    try:
-        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
-    except Exception:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+async def cancel_booking(booking_id: str, inp: CancelInput = None, user=None) -> dict:
+    booking = await find_booking_or_404(booking_id)
     if booking.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Booking already cancelled")
     # Verify phone for customer self-service
@@ -443,13 +443,8 @@ async def cancel_booking(booking_id: str, inp: CancelInput = None, user=None):
     return {"message": "Booking cancelled", "status": "cancelled"}
 
 @api_router.put("/bookings/{booking_id}/reschedule")
-async def reschedule_booking(booking_id: str, inp: RescheduleInput):
-    try:
-        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
-    except Exception:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+async def reschedule_booking(booking_id: str, inp: RescheduleInput) -> dict:
+    booking = await find_booking_or_404(booking_id)
     if booking.get("status") == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot reschedule cancelled booking")
     # Verify phone
@@ -469,25 +464,15 @@ async def reschedule_booking(booking_id: str, inp: RescheduleInput):
     return {"message": "Booking rescheduled", "new_date": inp.new_date, "new_time_slot": inp.new_time_slot}
 
 @api_router.put("/bookings/{booking_id}/admin-cancel")
-async def admin_cancel_booking(booking_id: str, user=Depends(get_current_user)):
-    try:
-        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
-    except Exception:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+async def admin_cancel_booking(booking_id: str, user=Depends(get_current_user)) -> dict:
+    booking = await find_booking_or_404(booking_id)
     await db.bookings.update_one({"_id": ObjectId(booking_id)}, {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat(), "cancelled_by": "admin"}})
     logger.info(f"[MOCK WhatsApp] Admin cancellation sent to {booking.get('customer_info', {}).get('whatsapp', 'N/A')}")
     return {"message": "Booking cancelled by admin"}
 
 @api_router.put("/bookings/{booking_id}/admin-reschedule")
-async def admin_reschedule_booking(booking_id: str, inp: RescheduleInput, user=Depends(get_current_user)):
-    try:
-        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
-    except Exception:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    if not booking:
-        raise HTTPException(status_code=404, detail="Booking not found")
+async def admin_reschedule_booking(booking_id: str, inp: RescheduleInput, user=Depends(get_current_user)) -> dict:
+    booking = await find_booking_or_404(booking_id)
     old_date = booking.get("date", "")
     old_time = booking.get("time_slot", "")
     await db.bookings.update_one({"_id": ObjectId(booking_id)}, {"$set": {
@@ -549,7 +534,7 @@ async def verify_payment(order_id: str, booking_id: str):
 # ─── Payment Plans ──────────────────────────────────────────
 
 @api_router.get("/payment-plans")
-async def get_payment_plans():
+async def get_payment_plans() -> List[dict]:
     return [
         {
             "id": "free_trial",
@@ -580,14 +565,14 @@ async def get_payment_plans():
 # ─── Customers ──────────────────────────────────────────────
 
 @api_router.get("/customers")
-async def get_customers(user=Depends(get_current_user)):
+async def get_customers(user=Depends(get_current_user)) -> List[dict]:
     custs = await db.customers.find({}).sort("created_at", -1).to_list(1000)
     return serialize_list(custs)
 
 # ─── Time Slots ─────────────────────────────────────────────
 
 @api_router.get("/timeslots")
-async def get_timeslots(location_id: str, date: str, duration: int):
+async def get_timeslots(location_id: str, date: str, duration: int) -> List[str]:
     # Generate available time slots based on duration needed
     slots = []
     start_hour = 9
@@ -620,8 +605,8 @@ async def get_timeslots(location_id: str, date: str, duration: int):
 
 # ─── Seed Data ──────────────────────────────────────────────
 
-async def seed_data():
-    # Seed admin
+async def seed_admin() -> None:
+    """Seed the default admin user."""
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@salon.com")
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
     existing = await db.users.find_one({"email": admin_email})
@@ -637,7 +622,8 @@ async def seed_data():
     elif not verify_password(admin_password, existing["password_hash"]):
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
 
-    # Seed settings
+async def seed_settings() -> None:
+    """Seed default business settings."""
     s = await db.settings.find_one({})
     if not s:
         await db.settings.insert_one({
@@ -647,125 +633,102 @@ async def seed_data():
             "theme": "earthy-minimal"
         })
 
-    # Seed locations
+async def seed_employees(loc1_id: str, loc2_id: str) -> tuple:
+    """Seed sample employees and return their IDs."""
+    def make_hours(start: str, end: str, off_days: List[str]) -> List[dict]:
+        return [{"day": d, "start": start if d not in off_days else "00:00", "end": end if d not in off_days else "00:00", "is_off": d in off_days}
+                for d in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]]
+
+    emp1 = await db.employees.insert_one({
+        "name": "Priya Sharma", "email": "priya@luxesalon.com", "phone": "+919876543210",
+        "location": loc1_id, "expertise": ["Hair Styling", "Hair Color"],
+        "working_hours": make_hours("09:00", "18:00", ["Sunday"]),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    emp2 = await db.employees.insert_one({
+        "name": "Rahul Verma", "email": "rahul@luxesalon.com", "phone": "+919876543211",
+        "location": loc2_id, "expertise": ["Facial", "Spa Treatment"],
+        "working_hours": make_hours("10:00", "19:00", ["Sunday"]),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    emp3 = await db.employees.insert_one({
+        "name": "Anita Desai", "email": "anita@luxesalon.com", "phone": "+919876543212",
+        "location": loc1_id, "expertise": ["Manicure", "Pedicure", "Nail Art"],
+        "working_hours": make_hours("09:00", "17:00", ["Saturday", "Sunday"]),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    return str(emp1.inserted_id), str(emp2.inserted_id), str(emp3.inserted_id)
+
+async def seed_services(loc1_id: str, loc2_id: str, emp1_id: str, emp2_id: str, emp3_id: str) -> List[str]:
+    """Seed sample services with add-ons and return their IDs."""
+    services_data = [
+        {"name": "Haircut & Styling", "price": 800, "duration_minutes": 45, "category": "Hair",
+         "description": "Professional haircut with wash and styling",
+         "add_ons": [{"id": str(uuid.uuid4()), "name": "Deep Conditioning", "price": 400, "duration_minutes": 20},
+                     {"id": str(uuid.uuid4()), "name": "Hair Spa", "price": 600, "duration_minutes": 30}],
+         "locations": [loc1_id, loc2_id], "employees": [emp1_id]},
+        {"name": "Hair Coloring", "price": 2500, "duration_minutes": 90, "category": "Hair",
+         "description": "Full hair coloring with premium products",
+         "add_ons": [{"id": str(uuid.uuid4()), "name": "Highlights", "price": 1500, "duration_minutes": 45},
+                     {"id": str(uuid.uuid4()), "name": "Root Touch-up", "price": 800, "duration_minutes": 30}],
+         "locations": [loc1_id, loc2_id], "employees": [emp1_id]},
+        {"name": "Classic Facial", "price": 1200, "duration_minutes": 60, "category": "Skin",
+         "description": "Deep cleansing facial with extraction and mask",
+         "add_ons": [{"id": str(uuid.uuid4()), "name": "LED Therapy", "price": 500, "duration_minutes": 15},
+                     {"id": str(uuid.uuid4()), "name": "Under-eye Treatment", "price": 300, "duration_minutes": 10}],
+         "locations": [loc1_id, loc2_id], "employees": [emp2_id]},
+        {"name": "Manicure", "price": 600, "duration_minutes": 30, "category": "Nails",
+         "description": "Classic manicure with nail shaping and polish",
+         "add_ons": [{"id": str(uuid.uuid4()), "name": "Gel Polish", "price": 400, "duration_minutes": 15},
+                     {"id": str(uuid.uuid4()), "name": "Nail Art (per nail)", "price": 100, "duration_minutes": 5}],
+         "locations": [loc1_id], "employees": [emp3_id]},
+        {"name": "Pedicure", "price": 700, "duration_minutes": 40, "category": "Nails",
+         "description": "Relaxing pedicure with foot massage",
+         "add_ons": [{"id": str(uuid.uuid4()), "name": "Gel Polish", "price": 400, "duration_minutes": 15},
+                     {"id": str(uuid.uuid4()), "name": "Paraffin Wax", "price": 300, "duration_minutes": 10}],
+         "locations": [loc1_id], "employees": [emp3_id]},
+    ]
+    svc_ids: List[str] = []
+    for svc in services_data:
+        svc["created_at"] = datetime.now(timezone.utc).isoformat()
+        result = await db.services.insert_one(svc)
+        svc_ids.append(str(result.inserted_id))
+    return svc_ids
+
+async def seed_locations_and_data() -> None:
+    """Seed sample locations, employees, and services."""
     loc_count = await db.locations.count_documents({})
-    if loc_count == 0:
-        loc1 = await db.locations.insert_one({"name": "Downtown Studio", "address": "42, MG Road, Connaught Place, New Delhi - 110001", "services": [], "employees": [], "created_at": datetime.now(timezone.utc).isoformat()})
-        loc2 = await db.locations.insert_one({"name": "Bandra West", "address": "15, Hill Road, Bandra West, Mumbai - 400050", "services": [], "employees": [], "created_at": datetime.now(timezone.utc).isoformat()})
-        loc1_id = str(loc1.inserted_id)
-        loc2_id = str(loc2.inserted_id)
+    if loc_count > 0:
+        return
 
-        # Seed employees
-        emp1 = await db.employees.insert_one({
-            "name": "Priya Sharma", "email": "priya@luxesalon.com", "phone": "+919876543210",
-            "location": loc1_id, "expertise": ["Hair Styling", "Hair Color"],
-            "working_hours": [
-                {"day": "Monday", "start": "09:00", "end": "18:00", "is_off": False},
-                {"day": "Tuesday", "start": "09:00", "end": "18:00", "is_off": False},
-                {"day": "Wednesday", "start": "09:00", "end": "18:00", "is_off": False},
-                {"day": "Thursday", "start": "09:00", "end": "18:00", "is_off": False},
-                {"day": "Friday", "start": "09:00", "end": "18:00", "is_off": False},
-                {"day": "Saturday", "start": "10:00", "end": "16:00", "is_off": False},
-                {"day": "Sunday", "start": "00:00", "end": "00:00", "is_off": True}
-            ],
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        emp2 = await db.employees.insert_one({
-            "name": "Rahul Verma", "email": "rahul@luxesalon.com", "phone": "+919876543211",
-            "location": loc2_id, "expertise": ["Facial", "Spa Treatment"],
-            "working_hours": [
-                {"day": "Monday", "start": "10:00", "end": "19:00", "is_off": False},
-                {"day": "Tuesday", "start": "10:00", "end": "19:00", "is_off": False},
-                {"day": "Wednesday", "start": "10:00", "end": "19:00", "is_off": False},
-                {"day": "Thursday", "start": "10:00", "end": "19:00", "is_off": False},
-                {"day": "Friday", "start": "10:00", "end": "19:00", "is_off": False},
-                {"day": "Saturday", "start": "10:00", "end": "17:00", "is_off": False},
-                {"day": "Sunday", "start": "00:00", "end": "00:00", "is_off": True}
-            ],
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        emp3 = await db.employees.insert_one({
-            "name": "Anita Desai", "email": "anita@luxesalon.com", "phone": "+919876543212",
-            "location": loc1_id, "expertise": ["Manicure", "Pedicure", "Nail Art"],
-            "working_hours": [
-                {"day": "Monday", "start": "09:00", "end": "17:00", "is_off": False},
-                {"day": "Tuesday", "start": "09:00", "end": "17:00", "is_off": False},
-                {"day": "Wednesday", "start": "09:00", "end": "17:00", "is_off": False},
-                {"day": "Thursday", "start": "09:00", "end": "17:00", "is_off": False},
-                {"day": "Friday", "start": "09:00", "end": "17:00", "is_off": False},
-                {"day": "Saturday", "start": "00:00", "end": "00:00", "is_off": True},
-                {"day": "Sunday", "start": "00:00", "end": "00:00", "is_off": True}
-            ],
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        emp1_id = str(emp1.inserted_id)
-        emp2_id = str(emp2.inserted_id)
-        emp3_id = str(emp3.inserted_id)
+    loc1 = await db.locations.insert_one({"name": "Downtown Studio", "address": "42, MG Road, Connaught Place, New Delhi - 110001", "services": [], "employees": [], "created_at": datetime.now(timezone.utc).isoformat()})
+    loc2 = await db.locations.insert_one({"name": "Bandra West", "address": "15, Hill Road, Bandra West, Mumbai - 400050", "services": [], "employees": [], "created_at": datetime.now(timezone.utc).isoformat()})
+    loc1_id, loc2_id = str(loc1.inserted_id), str(loc2.inserted_id)
 
-        # Update locations with employees
-        await db.locations.update_one({"_id": ObjectId(loc1_id)}, {"$set": {"employees": [emp1_id, emp3_id]}})
-        await db.locations.update_one({"_id": ObjectId(loc2_id)}, {"$set": {"employees": [emp2_id]}})
+    emp1_id, emp2_id, emp3_id = await seed_employees(loc1_id, loc2_id)
 
-        # Seed services
-        svc1 = await db.services.insert_one({
-            "name": "Haircut & Styling", "price": 800, "duration_minutes": 45, "category": "Hair",
-            "description": "Professional haircut with wash and styling",
-            "add_ons": [
-                {"id": str(uuid.uuid4()), "name": "Deep Conditioning", "price": 400, "duration_minutes": 20},
-                {"id": str(uuid.uuid4()), "name": "Hair Spa", "price": 600, "duration_minutes": 30}
-            ],
-            "locations": [loc1_id, loc2_id], "employees": [emp1_id],
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        svc2 = await db.services.insert_one({
-            "name": "Hair Coloring", "price": 2500, "duration_minutes": 90, "category": "Hair",
-            "description": "Full hair coloring with premium products",
-            "add_ons": [
-                {"id": str(uuid.uuid4()), "name": "Highlights", "price": 1500, "duration_minutes": 45},
-                {"id": str(uuid.uuid4()), "name": "Root Touch-up", "price": 800, "duration_minutes": 30}
-            ],
-            "locations": [loc1_id, loc2_id], "employees": [emp1_id],
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        svc3 = await db.services.insert_one({
-            "name": "Classic Facial", "price": 1200, "duration_minutes": 60, "category": "Skin",
-            "description": "Deep cleansing facial with extraction and mask",
-            "add_ons": [
-                {"id": str(uuid.uuid4()), "name": "LED Therapy", "price": 500, "duration_minutes": 15},
-                {"id": str(uuid.uuid4()), "name": "Under-eye Treatment", "price": 300, "duration_minutes": 10}
-            ],
-            "locations": [loc1_id, loc2_id], "employees": [emp2_id],
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        svc4 = await db.services.insert_one({
-            "name": "Manicure", "price": 600, "duration_minutes": 30, "category": "Nails",
-            "description": "Classic manicure with nail shaping and polish",
-            "add_ons": [
-                {"id": str(uuid.uuid4()), "name": "Gel Polish", "price": 400, "duration_minutes": 15},
-                {"id": str(uuid.uuid4()), "name": "Nail Art (per nail)", "price": 100, "duration_minutes": 5}
-            ],
-            "locations": [loc1_id], "employees": [emp3_id],
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        svc5 = await db.services.insert_one({
-            "name": "Pedicure", "price": 700, "duration_minutes": 40, "category": "Nails",
-            "description": "Relaxing pedicure with foot massage",
-            "add_ons": [
-                {"id": str(uuid.uuid4()), "name": "Gel Polish", "price": 400, "duration_minutes": 15},
-                {"id": str(uuid.uuid4()), "name": "Paraffin Wax", "price": 300, "duration_minutes": 10}
-            ],
-            "locations": [loc1_id], "employees": [emp3_id],
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
+    await db.locations.update_one({"_id": ObjectId(loc1_id)}, {"$set": {"employees": [emp1_id, emp3_id]}})
+    await db.locations.update_one({"_id": ObjectId(loc2_id)}, {"$set": {"employees": [emp2_id]}})
 
-        svc_ids = [str(svc1.inserted_id), str(svc2.inserted_id), str(svc3.inserted_id), str(svc4.inserted_id), str(svc5.inserted_id)]
-        await db.locations.update_one({"_id": ObjectId(loc1_id)}, {"$set": {"services": svc_ids}})
-        await db.locations.update_one({"_id": ObjectId(loc2_id)}, {"$set": {"services": [svc_ids[0], svc_ids[1], svc_ids[2]]}})
+    svc_ids = await seed_services(loc1_id, loc2_id, emp1_id, emp2_id, emp3_id)
 
-    # Write test credentials
+    await db.locations.update_one({"_id": ObjectId(loc1_id)}, {"$set": {"services": svc_ids}})
+    await db.locations.update_one({"_id": ObjectId(loc2_id)}, {"$set": {"services": svc_ids[:3]}})
+
+async def write_test_credentials() -> None:
+    """Write test credentials file for testing agent."""
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@salon.com")
+    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
     os.makedirs("/app/memory", exist_ok=True)
     with open("/app/memory/test_credentials.md", "w") as f:
         f.write(f"# Test Credentials\n\n## Admin\n- Email: {admin_email}\n- Password: {admin_password}\n- Role: admin\n\n## Test Signup\n- Any email/password (min 6 chars) works for registration\n- Endpoint: POST /api/auth/register\n\n## Auth Endpoints\n- POST /api/auth/login\n- POST /api/auth/register\n- POST /api/auth/logout\n- GET /api/auth/me\n\n## Booking Endpoints\n- POST /api/bookings\n- GET /api/bookings/{{id}}\n- PUT /api/bookings/{{id}}/cancel\n- PUT /api/bookings/{{id}}/reschedule\n- PUT /api/bookings/{{id}}/admin-cancel\n- PUT /api/bookings/{{id}}/admin-reschedule\n\n## Payment Endpoints (MOCKED)\n- POST /api/payments/create-order\n- POST /api/payments/verify\n- GET /api/payment-plans\n")
+
+async def seed_data() -> None:
+    """Main seed function - orchestrates all seeding."""
+    await seed_admin()
+    await seed_settings()
+    await seed_locations_and_data()
+    await write_test_credentials()
 
 @app.on_event("startup")
 async def startup():
