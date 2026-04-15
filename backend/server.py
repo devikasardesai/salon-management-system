@@ -91,6 +91,12 @@ class LoginInput(BaseModel):
     email: str
     password: str
 
+class RegisterInput(BaseModel):
+    name: str
+    email: str
+    password: str
+    business_name: Optional[str] = "My Salon"
+
 class SettingsInput(BaseModel):
     business_name: Optional[str] = "LuxeSalon"
     business_email: Optional[str] = ""
@@ -100,7 +106,7 @@ class SettingsInput(BaseModel):
 class ProfileInput(BaseModel):
     name: Optional[str] = ""
     email: Optional[str] = ""
-    payment_plan: Optional[str] = "Free"
+    payment_plan: Optional[str] = "Free Trial"
     payment_details: Optional[str] = ""
 
 class LocationInput(BaseModel):
@@ -154,6 +160,19 @@ class BookingInput(BaseModel):
     total_price: float
     total_duration: int
     customer_info: BookingCustomerInfo
+    payment_status: Optional[str] = "pending"
+
+class RescheduleInput(BaseModel):
+    phone: str
+    new_date: str
+    new_time_slot: str
+
+class CancelInput(BaseModel):
+    phone: str
+
+class MockPaymentInput(BaseModel):
+    booking_id: str
+    amount: float
 
 # ─── Auth ───────────────────────────────────────────────────
 
@@ -169,6 +188,47 @@ async def login(input: LoginInput, response: Response):
     response.set_cookie(key="access_token", value=access, httponly=True, secure=False, samesite="lax", max_age=3600, path="/")
     response.set_cookie(key="refresh_token", value=refresh, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
     return {"id": uid, "email": user["email"], "name": user.get("name", ""), "role": user.get("role", "admin"), "token": access}
+
+@api_router.post("/auth/register")
+async def register(input: RegisterInput, response: Response):
+    email = input.email.strip().lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if len(input.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    user_doc = {
+        "email": email,
+        "password_hash": hash_password(input.password),
+        "name": input.name.strip(),
+        "role": "admin",
+        "payment_plan": "free_trial",
+        "plan_start_date": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    result = await db.users.insert_one(user_doc)
+    uid = str(result.inserted_id)
+    # Create default settings for this user
+    await db.settings.update_one({}, {"$setOnInsert": {
+        "business_name": input.business_name or "My Salon",
+        "business_email": email,
+        "business_webpage": "",
+        "theme": "earthy-minimal"
+    }}, upsert=True)
+    # Create default profile
+    await db.profiles.insert_one({
+        "user_id": uid,
+        "name": input.name.strip(),
+        "email": email,
+        "payment_plan": "Free Trial (1 month)",
+        "payment_details": ""
+    })
+    access = create_access_token(uid, email)
+    refresh = create_refresh_token(uid)
+    response.set_cookie(key="access_token", value=access, httponly=True, secure=False, samesite="lax", max_age=3600, path="/")
+    response.set_cookie(key="refresh_token", value=refresh, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
+    logger.info(f"New user registered: {email}")
+    return {"id": uid, "email": email, "name": input.name.strip(), "role": "admin", "token": access}
 
 @api_router.post("/auth/logout")
 async def logout(response: Response):
@@ -315,7 +375,9 @@ async def get_bookings(location_id: Optional[str] = None):
 async def create_booking(inp: BookingInput):
     data = inp.model_dump()
     data["status"] = "confirmed"
+    data["payment_status"] = "completed"  # Mock: always completed
     data["created_at"] = datetime.now(timezone.utc).isoformat()
+    data["manage_token"] = secrets.token_urlsafe(16)
     # Save/update customer
     cust = data["customer_info"]
     existing = await db.customers.find_one({"phone": cust["phone"]})
@@ -352,6 +414,92 @@ async def create_booking(inp: BookingInput):
     data.pop("_id", None)
     return data
 
+@api_router.get("/bookings/{booking_id}")
+async def get_booking(booking_id: str):
+    try:
+        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return serialize_doc(booking)
+
+@api_router.put("/bookings/{booking_id}/cancel")
+async def cancel_booking(booking_id: str, inp: CancelInput = None, user=None):
+    try:
+        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="Booking already cancelled")
+    # Verify phone for customer self-service
+    if inp and inp.phone:
+        if booking.get("customer_info", {}).get("phone") != inp.phone:
+            raise HTTPException(status_code=403, detail="Phone number does not match booking")
+    await db.bookings.update_one({"_id": ObjectId(booking_id)}, {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}})
+    logger.info(f"[MOCK WhatsApp] Cancellation notice sent to {booking.get('customer_info', {}).get('whatsapp', 'N/A')}")
+    return {"message": "Booking cancelled", "status": "cancelled"}
+
+@api_router.put("/bookings/{booking_id}/reschedule")
+async def reschedule_booking(booking_id: str, inp: RescheduleInput):
+    try:
+        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.get("status") == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot reschedule cancelled booking")
+    # Verify phone
+    if booking.get("customer_info", {}).get("phone") != inp.phone:
+        raise HTTPException(status_code=403, detail="Phone number does not match booking")
+    old_date = booking.get("date", "")
+    old_time = booking.get("time_slot", "")
+    await db.bookings.update_one({"_id": ObjectId(booking_id)}, {"$set": {
+        "date": inp.new_date,
+        "time_slot": inp.new_time_slot,
+        "status": "rescheduled",
+        "rescheduled_at": datetime.now(timezone.utc).isoformat(),
+        "previous_date": old_date,
+        "previous_time": old_time
+    }})
+    logger.info(f"[MOCK WhatsApp] Reschedule notice sent: moved from {old_date} {old_time} to {inp.new_date} {inp.new_time_slot}")
+    return {"message": "Booking rescheduled", "new_date": inp.new_date, "new_time_slot": inp.new_time_slot}
+
+@api_router.put("/bookings/{booking_id}/admin-cancel")
+async def admin_cancel_booking(booking_id: str, user=Depends(get_current_user)):
+    try:
+        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    await db.bookings.update_one({"_id": ObjectId(booking_id)}, {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat(), "cancelled_by": "admin"}})
+    logger.info(f"[MOCK WhatsApp] Admin cancellation sent to {booking.get('customer_info', {}).get('whatsapp', 'N/A')}")
+    return {"message": "Booking cancelled by admin"}
+
+@api_router.put("/bookings/{booking_id}/admin-reschedule")
+async def admin_reschedule_booking(booking_id: str, inp: RescheduleInput, user=Depends(get_current_user)):
+    try:
+        booking = await db.bookings.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    old_date = booking.get("date", "")
+    old_time = booking.get("time_slot", "")
+    await db.bookings.update_one({"_id": ObjectId(booking_id)}, {"$set": {
+        "date": inp.new_date,
+        "time_slot": inp.new_time_slot,
+        "status": "rescheduled",
+        "rescheduled_at": datetime.now(timezone.utc).isoformat(),
+        "previous_date": old_date,
+        "previous_time": old_time
+    }})
+    return {"message": "Booking rescheduled by admin"}
+
 @api_router.put("/bookings/{booking_id}/status")
 async def update_booking_status(booking_id: str, status: str, user=Depends(get_current_user)):
     await db.bookings.update_one({"_id": ObjectId(booking_id)}, {"$set": {"status": status}})
@@ -361,6 +509,73 @@ async def update_booking_status(booking_id: str, status: str, user=Depends(get_c
 async def delete_booking(booking_id: str, user=Depends(get_current_user)):
     await db.bookings.delete_one({"_id": ObjectId(booking_id)})
     return {"message": "Deleted"}
+
+# ─── Mock Razorpay Payment ──────────────────────────────────
+
+@api_router.post("/payments/create-order")
+async def create_payment_order(inp: MockPaymentInput):
+    """Mock Razorpay order creation"""
+    order_id = f"order_mock_{secrets.token_hex(8)}"
+    logger.info(f"[MOCK Razorpay] Order created: {order_id} for amount ₹{inp.amount}")
+    return {
+        "order_id": order_id,
+        "amount": inp.amount,
+        "currency": "INR",
+        "status": "created",
+        "provider": "razorpay_mock"
+    }
+
+@api_router.post("/payments/verify")
+async def verify_payment(order_id: str, booking_id: str):
+    """Mock Razorpay payment verification - always succeeds"""
+    payment_id = f"pay_mock_{secrets.token_hex(8)}"
+    logger.info(f"[MOCK Razorpay] Payment verified: {payment_id} for order {order_id}")
+    # Update booking payment status
+    try:
+        await db.bookings.update_one({"_id": ObjectId(booking_id)}, {"$set": {
+            "payment_status": "completed",
+            "payment_id": payment_id,
+            "payment_order_id": order_id
+        }})
+    except Exception:
+        pass
+    return {
+        "payment_id": payment_id,
+        "order_id": order_id,
+        "status": "completed",
+        "provider": "razorpay_mock"
+    }
+
+# ─── Payment Plans ──────────────────────────────────────────
+
+@api_router.get("/payment-plans")
+async def get_payment_plans():
+    return [
+        {
+            "id": "free_trial",
+            "name": "Free Trial",
+            "duration": "1 month",
+            "price_per_location": 0,
+            "description": "Free for all locations for 1 month",
+            "features": ["Unlimited locations", "All features included", "WhatsApp notifications", "Customer database"]
+        },
+        {
+            "id": "starter",
+            "name": "Starter",
+            "duration": "2 months",
+            "price_per_location": 1000,
+            "description": "₹1,000 per location per month",
+            "features": ["Per-location pricing", "All features included", "WhatsApp notifications", "Priority support"]
+        },
+        {
+            "id": "dynamic",
+            "name": "Custom",
+            "duration": "Ongoing",
+            "price_per_location": None,
+            "description": "Dynamic pricing based on features",
+            "features": ["Custom pricing", "Feature-based billing", "Dedicated support", "Custom integrations"]
+        }
+    ]
 
 # ─── Customers ──────────────────────────────────────────────
 
@@ -550,7 +765,7 @@ async def seed_data():
     # Write test credentials
     os.makedirs("/app/memory", exist_ok=True)
     with open("/app/memory/test_credentials.md", "w") as f:
-        f.write(f"# Test Credentials\n\n## Admin\n- Email: {admin_email}\n- Password: {admin_password}\n- Role: admin\n\n## Auth Endpoints\n- POST /api/auth/login\n- POST /api/auth/logout\n- GET /api/auth/me\n")
+        f.write(f"# Test Credentials\n\n## Admin\n- Email: {admin_email}\n- Password: {admin_password}\n- Role: admin\n\n## Test Signup\n- Any email/password (min 6 chars) works for registration\n- Endpoint: POST /api/auth/register\n\n## Auth Endpoints\n- POST /api/auth/login\n- POST /api/auth/register\n- POST /api/auth/logout\n- GET /api/auth/me\n\n## Booking Endpoints\n- POST /api/bookings\n- GET /api/bookings/{{id}}\n- PUT /api/bookings/{{id}}/cancel\n- PUT /api/bookings/{{id}}/reschedule\n- PUT /api/bookings/{{id}}/admin-cancel\n- PUT /api/bookings/{{id}}/admin-reschedule\n\n## Payment Endpoints (MOCKED)\n- POST /api/payments/create-order\n- POST /api/payments/verify\n- GET /api/payment-plans\n")
 
 @app.on_event("startup")
 async def startup():

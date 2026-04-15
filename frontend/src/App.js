@@ -16,6 +16,7 @@ import ProfilePage from "./pages/admin/ProfilePage";
 import SettingsPage from "./pages/admin/SettingsPage";
 import BookingLinkPage from "./pages/admin/BookingLinkPage";
 import BookingPage from "./pages/customer/BookingPage";
+import ManageBookingPage from "./pages/customer/ManageBookingPage";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -35,8 +36,9 @@ function AppRoutes() {
     <Routes>
       {/* Customer booking - public */}
       <Route path="/book" element={<BookingPage />} />
+      <Route path="/manage-booking/:bookingId" element={<ManageBookingPage />} />
 
-      {/* Admin login */}
+      {/* Admin login/signup */}
       <Route path="/admin/login" element={<LoginPage />} />
 
       {/* Admin protected routes */}

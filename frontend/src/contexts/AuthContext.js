@@ -28,13 +28,19 @@ export function AuthProvider({ children }) {
     return data;
   };
 
+  const register = async (name, email, password, businessName) => {
+    const { data } = await api.post("/auth/register", { name, email, password, business_name: businessName });
+    setUser(data);
+    return data;
+  };
+
   const logout = async () => {
     await api.post("/auth/logout");
     setUser(false);
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, checkAuth }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, checkAuth }}>
       {children}
     </AuthContext.Provider>
   );

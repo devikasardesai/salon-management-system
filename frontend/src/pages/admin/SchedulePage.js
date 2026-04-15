@@ -3,14 +3,27 @@ import api from "../../lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Badge } from "../../components/ui/badge";
-import { Calendar, Clock, User, MapPin } from "lucide-react";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
+import { Calendar as CalendarIcon, Clock, User, MapPin, X, CalendarDays } from "lucide-react";
+import { Calendar } from "../../components/ui/calendar";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../components/ui/dialog";
 import { format, parseISO, startOfWeek, addDays, isSameDay } from "date-fns";
+import { toast } from "sonner";
 
 export default function SchedulePage() {
   const [bookings, setBookings] = useState([]);
   const [locations, setLocations] = useState([]);
   const [selectedLocation, setSelectedLocation] = useState("all");
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [rescheduleDialogOpen, setRescheduleDialogOpen] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState(null);
+  const [newDate, setNewDate] = useState(null);
+  const [newTime, setNewTime] = useState(null);
+  const [timeSlots, setTimeSlots] = useState([]);
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
     fetchLocations();
@@ -49,6 +62,55 @@ export default function SchedulePage() {
   };
 
   const getLocationName = (id) => locations.find((l) => l.id === id)?.name || "Unknown";
+
+  const openCancelDialog = (b) => { setSelectedBooking(b); setCancelDialogOpen(true); };
+  const openRescheduleDialog = (b) => { setSelectedBooking(b); setNewDate(null); setNewTime(null); setRescheduleDialogOpen(true); };
+
+  const handleAdminCancel = async () => {
+    if (!selectedBooking) return;
+    setActionLoading(true);
+    try {
+      await api.put(`/bookings/${selectedBooking.id}/admin-cancel`);
+      toast.success("Booking cancelled");
+      fetchBookings();
+      setCancelDialogOpen(false);
+    } catch (e) {
+      toast.error("Failed to cancel");
+    }
+    setActionLoading(false);
+  };
+
+  useEffect(() => {
+    if (newDate && selectedBooking) {
+      const dateStr = format(newDate, "yyyy-MM-dd");
+      api.get("/timeslots", { params: { location_id: selectedBooking.location_id, date: dateStr, duration: selectedBooking.total_duration || 60 } })
+        .then((r) => setTimeSlots(r.data))
+        .catch(() => setTimeSlots([]));
+    }
+  }, [newDate, selectedBooking]);
+
+  const handleAdminReschedule = async () => {
+    if (!selectedBooking || !newDate || !newTime) return;
+    setActionLoading(true);
+    try {
+      await api.put(`/bookings/${selectedBooking.id}/admin-reschedule`, {
+        phone: selectedBooking.customer_info?.phone || "",
+        new_date: format(newDate, "yyyy-MM-dd"),
+        new_time_slot: newTime
+      });
+      toast.success("Booking rescheduled");
+      fetchBookings();
+      setRescheduleDialogOpen(false);
+    } catch (e) {
+      toast.error("Failed to reschedule");
+    }
+    setActionLoading(false);
+  };
+
+  const statusColor = (status) => {
+    const map = { confirmed: "default", rescheduled: "secondary", cancelled: "destructive" };
+    return map[status] || "secondary";
+  };
 
   return (
     <div className="space-y-6" data-testid="schedule-page">
@@ -141,22 +203,96 @@ export default function SchedulePage() {
                   <div className="flex items-center gap-2">
                     <User className="w-4 h-4 text-primary" />
                     <span className="font-medium">{b.customer_info?.full_name}</span>
-                    <Badge variant={b.status === "confirmed" ? "default" : "secondary"} className="text-xs">{b.status}</Badge>
+                    <Badge variant={statusColor(b.status)} className="text-xs">{b.status}</Badge>
+                    {b.payment_status && <Badge variant="outline" className="text-xs">&#8377;{b.total_price}</Badge>}
                   </div>
                   <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {b.date}</span>
+                    <span className="flex items-center gap-1"><CalendarIcon className="w-3 h-3" /> {b.date}</span>
                     <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {b.time_slot}</span>
                     <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {getLocationName(b.location_id)}</span>
                   </div>
                   <div className="mt-1 text-sm text-muted-foreground">
-                    {b.services?.map((s, i) => s.name).join(", ")} &middot; {b.total_duration} min &middot; &#8377;{b.total_price}
+                    {b.services?.map((s) => s.name).join(", ")} &middot; {b.total_duration} min
                   </div>
                 </div>
+                {b.status !== "cancelled" && (
+                  <div className="flex gap-2 flex-shrink-0">
+                    <Button variant="outline" size="sm" onClick={() => openRescheduleDialog(b)} data-testid={`admin-reschedule-${b.id}`}>
+                      <CalendarDays className="w-3 h-3 mr-1" /> Reschedule
+                    </Button>
+                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => openCancelDialog(b)} data-testid={`admin-cancel-${b.id}`}>
+                      <X className="w-3 h-3 mr-1" /> Cancel
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))
         )}
       </div>
+
+      {/* Admin Cancel Dialog */}
+      <Dialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel Booking</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Cancel appointment for <strong>{selectedBooking?.customer_info?.full_name}</strong> on {selectedBooking?.date} at {selectedBooking?.time_slot}?
+            A cancellation notice will be sent to the customer's WhatsApp.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCancelDialogOpen(false)}>Keep</Button>
+            <Button variant="destructive" onClick={handleAdminCancel} disabled={actionLoading} data-testid="admin-confirm-cancel-btn">
+              {actionLoading ? "Cancelling..." : "Cancel Booking"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Admin Reschedule Dialog */}
+      <Dialog open={rescheduleDialogOpen} onOpenChange={setRescheduleDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Reschedule Booking</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground mb-2">
+            Rescheduling for <strong>{selectedBooking?.customer_info?.full_name}</strong>
+          </p>
+          <div className="space-y-4">
+            <div className="flex justify-center">
+              <Calendar
+                mode="single"
+                selected={newDate}
+                onSelect={(d) => { setNewDate(d); setNewTime(null); }}
+                disabled={(d) => d < new Date(new Date().setHours(0, 0, 0, 0))}
+              />
+            </div>
+            {newDate && (
+              <>
+                <p className="text-sm font-medium">{format(newDate, "EEEE, MMMM d, yyyy")}</p>
+                {timeSlots.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No available slots</p>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2">
+                    {timeSlots.map((slot) => (
+                      <Button key={slot} variant={newTime === slot ? "default" : "outline"} size="sm" onClick={() => setNewTime(slot)}>
+                        {slot}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRescheduleDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleAdminReschedule} disabled={!newDate || !newTime || actionLoading} data-testid="admin-confirm-reschedule-btn">
+              {actionLoading ? "Rescheduling..." : "Confirm Reschedule"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

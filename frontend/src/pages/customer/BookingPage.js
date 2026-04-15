@@ -7,7 +7,8 @@ import { Label } from "../../components/ui/label";
 import { Badge } from "../../components/ui/badge";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Calendar } from "../../components/ui/calendar";
-import { MapPin, Clock, ChevronRight, ChevronLeft, Check, ShoppingCart } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../../components/ui/dialog";
+import { MapPin, Clock, ChevronRight, ChevronLeft, Check, ShoppingCart, CreditCard } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
@@ -29,6 +30,9 @@ export default function BookingPage() {
   const [customerInfo, setCustomerInfo] = useState({ full_name: "", phone: "", email: "", whatsapp: "", same_as_phone: false });
   const [submitting, setSubmitting] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [bookingResult, setBookingResult] = useState(null);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
   const [phoneError, setPhoneError] = useState("");
   const [whatsappError, setWhatsappError] = useState("");
 
@@ -132,8 +136,18 @@ export default function BookingPage() {
 
   const submitBooking = async () => {
     if (!canProceed()) return;
-    setSubmitting(true);
+    setPaymentDialogOpen(true);
+  };
+
+  const processPayment = async () => {
+    setPaymentProcessing(true);
     try {
+      // Step 1: Create mock Razorpay order
+      const { data: order } = await axios.post(`${API}/payments/create-order`, {
+        booking_id: "pending",
+        amount: totalPrice
+      });
+      // Step 2: Create booking
       const payload = {
         location_id: selectedLocation.id,
         services: cart.map((c) => ({
@@ -148,14 +162,19 @@ export default function BookingPage() {
         total_price: totalPrice,
         total_duration: totalDuration,
         customer_info: customerInfo,
+        payment_status: "completed",
       };
-      await axios.post(`${API}/bookings`, payload);
+      const { data: bookingData } = await axios.post(`${API}/bookings`, payload);
+      // Step 3: Verify mock payment
+      await axios.post(`${API}/payments/verify?order_id=${order.order_id}&booking_id=${bookingData.id}`);
+      setBookingResult(bookingData);
       setBookingSuccess(true);
-      toast.success("Booking confirmed!");
+      setPaymentDialogOpen(false);
+      toast.success("Payment successful! Booking confirmed!");
     } catch (e) {
-      toast.error("Failed to book. Please try again.");
+      toast.error("Payment failed. Please try again.");
     }
-    setSubmitting(false);
+    setPaymentProcessing(false);
   };
 
   if (bookingSuccess) {
@@ -175,8 +194,17 @@ export default function BookingPage() {
               A confirmation message has been sent to your WhatsApp ({customerInfo.whatsapp}).
               You will receive reminders 1 hour and 30 minutes before your appointment.
             </p>
+            <div className="p-3 bg-secondary/30 rounded-lg text-xs text-muted-foreground">
+              <p className="font-medium text-foreground mb-1">Payment: &#8377;{totalPrice} (MOCK Razorpay)</p>
+              <p>Payment processed successfully via Razorpay (mocked)</p>
+            </div>
             <p className="text-lg font-semibold text-primary">Total: &#8377;{totalPrice}</p>
-            <Button onClick={() => window.location.reload()} variant="outline" data-testid="book-another-btn">Book Another Appointment</Button>
+            {bookingResult?.id && (
+              <Button variant="outline" onClick={() => window.location.href = `/manage-booking/${bookingResult.id}`} data-testid="manage-booking-btn">
+                Manage Booking (Cancel/Reschedule)
+              </Button>
+            )}
+            <Button onClick={() => window.location.reload()} variant="ghost" className="text-sm" data-testid="book-another-btn">Book Another Appointment</Button>
           </CardContent>
         </Card>
       </div>
@@ -473,6 +501,43 @@ export default function BookingPage() {
           )}
         </div>
       </div>
+
+      {/* Mock Razorpay Payment Dialog */}
+      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CreditCard className="w-5 h-5" /> Payment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="p-4 bg-secondary/30 rounded-lg text-center">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Amount to Pay</p>
+              <p className="text-3xl font-semibold text-foreground">&#8377;{totalPrice}</p>
+            </div>
+            <div className="p-3 border border-border rounded-lg space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center">
+                  <span className="text-white text-xs font-bold">R</span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Razorpay (MOCKED)</p>
+                  <p className="text-xs text-muted-foreground">Test payment gateway</p>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-center text-muted-foreground">
+              This is a mock payment. No real transaction will be processed.
+            </p>
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button className="w-full" onClick={processPayment} disabled={paymentProcessing} data-testid="pay-now-btn">
+              {paymentProcessing ? "Processing Payment..." : `Pay ₹${totalPrice}`}
+            </Button>
+            <Button variant="ghost" className="w-full" onClick={() => setPaymentDialogOpen(false)} data-testid="cancel-payment-btn">
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
