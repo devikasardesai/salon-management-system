@@ -1,0 +1,137 @@
+{
+  "theme_and_archetype": {
+    "domain": "Salon & Wellness Appointment Booking",
+    "primary_theme": "LIGHT",
+    "primary_archetype": "Archetype 1 (Organic & Earthy)",
+    "reasoning": "A luxury salon booking platform requires an inviting, calming, and premium aesthetic. The design should convey trust and relaxation for customers, while providing a clean, authoritative interface for admins."
+  },
+  "color_themes": [
+    {
+      "name": "Earthy Minimal",
+      "type": "light",
+      "description": "Warm and organic, focusing on earthy tones and natural elegance.",
+      "colors": {
+        "background": "#FDFBF7",
+        "foreground": "#1A1A1A",
+        "primary": "#C87966",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#E5E0D8",
+        "secondary_foreground": "#2D2D2D",
+        "accent": "#96A692",
+        "border": "#E5E0D8",
+        "card": "#FFFFFF",
+        "card_foreground": "#1A1A1A",
+        "ring": "#C87966"
+      }
+    },
+    {
+      "name": "Midnight Luxe",
+      "type": "dark",
+      "description": "A moody, cinematic premium feel.",
+      "colors": {
+        "background": "#0B1015",
+        "foreground": "#F5F5F5",
+        "primary": "#D4AF37",
+        "primary_foreground": "#0B1015",
+        "secondary": "#1A232C",
+        "secondary_foreground": "#E0E0E0",
+        "accent": "#1A232C",
+        "border": "#2C3A47",
+        "card": "#121A21",
+        "card_foreground": "#F5F5F5",
+        "ring": "#D4AF37"
+      }
+    },
+    {
+      "name": "Soft Blush",
+      "type": "light",
+      "description": "Optimistic and tactile, focusing on pastel warmth.",
+      "colors": {
+        "background": "#FFF5F5",
+        "foreground": "#2D3748",
+        "primary": "#E29578",
+        "primary_foreground": "#FFFFFF",
+        "secondary": "#FFD6CC",
+        "secondary_foreground": "#4A5568",
+        "accent": "#FFD6CC",
+        "border": "#F2E3E3",
+        "card": "#FFFFFF",
+        "card_foreground": "#2D3748",
+        "ring": "#E29578"
+      }
+    }
+  ],
+  "typography": {
+    "font_families": {
+      "headings": "Playfair Display, serif",
+      "body": "Outfit, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tight leading-none font-light",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-light",
+      "h3": "text-xl sm:text-2xl font-medium tracking-tight",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base leading-relaxed",
+      "labels": "text-xs tracking-[0.2em] uppercase font-semibold"
+    }
+  },
+  "grids_and_layouts": {
+    "general": "Embrace negative space. Padding scales should be generous (p-8, p-12).",
+    "admin_dashboard": "Use 'Control Room' grids (grid-cols-1 md:grid-cols-3 lg:grid-cols-4). Elements must stretch and align optically. Gap-6.",
+    "customer_booking_flow": "Immersive 'Tetris' grid or centered max-w-3xl flows for step-by-step booking. Mobile-first stacking.",
+    "header": "Always present. Fixed or sticky with backdrop-blur-xl and bg-background/80."
+  },
+  "visual_enhancers": {
+    "shadows": "Diffuse ambient shadows only (shadow-sm or shadow-[0_8px_32px_rgba(0,0,0,0.08)]).",
+    "borders": "1px crisp borders using border-border/60. Nested border-radius: child should have smaller radius than parent.",
+    "surfaces": "Use 'Glassmorphism' strictly for the Header. 'Neumorphism' (tactile, clay-like) is banned. Use solid crisp cards for Admin panels."
+  },
+  "motion_and_interactions": {
+    "hover_states": "Interactive elements MUST have an explicit hover state (e.g., hover:-translate-y-1 hover:shadow-lg transition-all duration-300).",
+    "focus_states": "High contrast ring for accessibility (focus:ring-2 focus:ring-primary focus:outline-none).",
+    "transitions": "Use specific properties (transition-colors, transition-transform) rather than 'transition-all' broadly."
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure text over images uses proper scrim/gradient overlays (bg-black/40) if using dark text/white backgrounds.",
+    "data_testid": "ALL interactive and informational elements MUST include a data-testid attribute in kebab-case."
+  },
+  "image_urls": [
+    {
+      "category": "hero_background",
+      "url": "https://static.prod-images.emergentagent.com/jobs/e766c057-970c-473e-b2ac-72106d57eadf/images/4e8d32a775a706cee771197bf55fb503358a6a5955a4f0458a05e331ad0f3a5f.png",
+      "description": "High-end luxury minimalist salon interior for customer landing page hero. Use with a slight overlay for text readability."
+    },
+    {
+      "category": "service_hair",
+      "url": "https://static.prod-images.emergentagent.com/jobs/e766c057-970c-473e-b2ac-72106d57eadf/images/ea2186d6d991be6a260a47bf7ca453425e21747de4e45970306d6b20a8656b57.png",
+      "description": "Hair styling tools on a marble counter, to be used in 'Hair' service category thumbnails."
+    },
+    {
+      "category": "service_spa",
+      "url": "https://static.prod-images.emergentagent.com/jobs/e766c057-970c-473e-b2ac-72106d57eadf/images/21417d2854246887fa1b768d3949127538915cd64e57076f9254e88575a3cc57.png",
+      "description": "Premium cosmetic and spa products, to be used in 'Spa/Skin' service category thumbnails."
+    },
+    {
+      "category": "location_or_about",
+      "url": "https://images.pexels.com/photos/7750120/pexels-photo-7750120.jpeg",
+      "description": "Elegant modern salon interior for Locations page or about us sections."
+    }
+  ],
+  "components": {
+    "base": "Use Shadcn UI primarily. Install lucide-react for icons.",
+    "currency": "Use Indian Rupees (₹) for all pricing formats.",
+    "inputs": "Forms must use Shadcn Input, Form, Checkbox, Select."
+  },
+  "instructions_to_main_agent": {
+    "1_themes": "Implement the 3 color themes (Earthy Minimal, Midnight Luxe, Soft Blush) for the admin to select. Use CSS variables in global stylesheet and apply them contextually.",
+    "2_customer_booking": "Build Customer Flow: Location -> Services -> Date/Time. Calculate and enforce time slots according to the TOTAL time required for all selected services + add-ons. Show add-ons time clearly. Show total sum amount (₹) and total hours at cart end.",
+    "3_fix_services_display": "CRITICAL UI FIX: In customer view 'choose services', place the price (₹) and time directly BELOW the name of the service to prevent overflow. Use 'flex-wrap gap-2' on add-ons so they do not spill outside the container.",
+    "4_customer_confirmation": "Confirm booking page requires full name, phone number, and optional email. Phone format MUST explicitly enforce '+91' followed by 10 digits. Add a WhatsApp number section with a required checkbox: 'check the box if your whatsapp number and phone number are the same'. If checked, auto-copy the phone number to whatsapp.",
+    "5_admin_services_locations": "Admin Services: allow adding products, sub-products/add-ons, price, hrs required, location availability, and employee availability. Locations: manage address, available services, and assigned employees. Reflect these mappings across the platform (dropdowns, search).",
+    "6_admin_employees": "Employee Management: add/edit name, assigned location, expertise, phone, email, and WORKING HOURS.",
+    "7_admin_schedule": "Admin Schedule: Filter appointments by Location using a dropdown. Display appointments on the calendar accurately representing their total time duration.",
+    "8_admin_profile_and_business": "Admin Profile: Add Name, Email, Payment Plan, Payment Details. Settings -> Account Settings: Add 'Business Information' section with editable inputs for Business Name, Business Email, and Business Webpage.",
+    "9_header_and_navigation": "Global Header: Display the dynamic 'Business Name' instead of 'LuxeSalon'. Next to the 'customer view' link, add a 'website' link mapping to the Business Webpage. Admin Sidebar Menu Order: 1. Schedule, 2. Booking Link (page linking to customer view that can be copied/forwarded), ... 3. Settings (at the bottom)."
+  }
+}
