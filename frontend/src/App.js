@@ -1,53 +1,82 @@
-import { useEffect } from "react";
+import React from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
+import { Toaster } from "./components/ui/sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+import LoginPage from "./pages/admin/LoginPage";
+import AdminLayout from "./components/AdminLayout";
+import SchedulePage from "./pages/admin/SchedulePage";
+import ServicesPage from "./pages/admin/ServicesPage";
+import EmployeesPage from "./pages/admin/EmployeesPage";
+import LocationsPage from "./pages/admin/LocationsPage";
+import CustomersPage from "./pages/admin/CustomersPage";
+import ProfilePage from "./pages/admin/ProfilePage";
+import SettingsPage from "./pages/admin/SettingsPage";
+import BookingLinkPage from "./pages/admin/BookingLinkPage";
+import BookingPage from "./pages/customer/BookingPage";
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
+function ProtectedRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/admin/login" replace />;
+  return children;
+}
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
+function AppRoutes() {
   return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
+    <Routes>
+      {/* Customer booking - public */}
+      <Route path="/book" element={<BookingPage />} />
+
+      {/* Admin login */}
+      <Route path="/admin/login" element={<LoginPage />} />
+
+      {/* Admin protected routes */}
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <AdminLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Navigate to="/admin/schedule" replace />} />
+        <Route path="schedule" element={<SchedulePage />} />
+        <Route path="booking-link" element={<BookingLinkPage />} />
+        <Route path="services" element={<ServicesPage />} />
+        <Route path="employees" element={<EmployeesPage />} />
+        <Route path="locations" element={<LocationsPage />} />
+        <Route path="customers" element={<CustomersPage />} />
+        <Route path="profile" element={<ProfilePage />} />
+        <Route path="settings" element={<SettingsPage />} />
+      </Route>
+
+      {/* Default redirect */}
+      <Route path="*" element={<Navigate to="/book" replace />} />
+    </Routes>
   );
-};
+}
 
 function App() {
   return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </div>
+    <BrowserRouter>
+      <ThemeProvider>
+        <AuthProvider>
+          <div className="App">
+            <AppRoutes />
+            <Toaster position="top-right" richColors />
+          </div>
+        </AuthProvider>
+      </ThemeProvider>
+    </BrowserRouter>
   );
 }
 
