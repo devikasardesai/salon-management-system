@@ -61,8 +61,8 @@ function AppRoutes() {
         <Route path="settings" element={<SettingsPage />} />
       </Route>
 
-      {/* Default redirect */}
-      <Route path="*" element={<Navigate to="/book" replace />} />
+      {/* Default redirect - admin is the main view */}
+      <Route path="*" element={<Navigate to="/admin" replace />} />
     </Routes>
   );
 }
