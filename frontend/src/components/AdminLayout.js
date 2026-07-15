@@ -48,7 +48,7 @@ export default function AdminLayout() {
             Admin
           </NavLink>
           <a
-            href="/book"
+            href={`/book${user?.id ? `?owner=${user.id}` : ""}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors duration-200"

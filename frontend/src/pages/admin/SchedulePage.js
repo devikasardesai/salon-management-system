@@ -35,7 +35,7 @@ export default function SchedulePage() {
 
   const fetchLocations = async () => {
     try {
-      const { data } = await api.get("/locations");
+      const { data } = await api.get("/locations/me");
       setLocations(data);
     } catch (e) { console.error(e); }
   };

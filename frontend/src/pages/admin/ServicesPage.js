@@ -23,7 +23,7 @@ export default function ServicesPage() {
   }, []);
 
   const fetchAll = async () => {
-    const [s, l, e] = await Promise.all([api.get("/services"), api.get("/locations"), api.get("/employees")]);
+    const [s, l, e] = await Promise.all([api.get("/services/me"), api.get("/locations/me"), api.get("/employees/me")]);
     setServices(s.data);
     setLocations(l.data);
     setEmployees(e.data);

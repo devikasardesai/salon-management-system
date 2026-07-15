@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useTheme } from "../../contexts/ThemeContext";
+import { useAuth } from "../../contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -8,9 +9,11 @@ import { toast } from "sonner";
 
 export default function BookingLinkPage() {
   const { settings } = useTheme();
+  const { user } = useAuth();
   const [copied, setCopied] = useState(false);
 
-  const bookingUrl = `${window.location.origin}/book`;
+  // Include owner ID in booking link for multi-tenant data isolation
+  const bookingUrl = `${window.location.origin}/book${user?.id ? `?owner=${user.id}` : ""}`;
   const websiteUrl = settings?.business_webpage || "";
 
   const copyLink = () => {
@@ -45,7 +48,7 @@ export default function BookingLinkPage() {
             </Button>
           </div>
           <Button variant="outline" asChild data-testid="open-booking-link-btn">
-            <a href="/book" target="_blank" rel="noopener noreferrer">
+            <a href={`/book${user?.id ? `?owner=${user.id}` : ""}`} target="_blank" rel="noopener noreferrer">
               <ExternalLink className="w-4 h-4 mr-2" /> Open Booking Page
             </a>
           </Button>
