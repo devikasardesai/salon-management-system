@@ -11,8 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { MapPin, Clock, ChevronRight, ChevronLeft, Check, ShoppingCart, CreditCard } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "sonner";
+import { API_URL } from "../../lib/api";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = `${API_URL}/api`;
 
 const STEPS = ["location", "services", "datetime", "confirm"];
 const STEP_LABELS = ["Select Location", "Choose Services", "Date & Time", "Confirm Booking"];

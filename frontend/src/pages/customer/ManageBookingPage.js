@@ -11,8 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Check, X, CalendarDays, Clock, MapPin, AlertTriangle } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { toast } from "sonner";
+import { API_URL } from "../../lib/api";
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API = `${API_URL}/api`;
 
 export default function ManageBookingPage() {
   const { bookingId } = useParams();
