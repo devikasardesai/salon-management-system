@@ -24,7 +24,7 @@ export default function EmployeesPage() {
   useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
-    const [e, l] = await Promise.all([api.get("/employees/me"), api.get("/locations/me")]);
+    const [e, l] = await Promise.all([api.get("/employees"), api.get("/locations")]);
     setEmployees(e.data);
     setLocations(l.data);
   };

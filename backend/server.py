@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, APIRouter, HTTPException
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
@@ -13,11 +13,9 @@ import logging
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 import uuid
-import bcrypt
-import jwt
 import secrets
 import html
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from bson import ObjectId
 from bson.errors import InvalidId
 
@@ -26,34 +24,13 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-app = FastAPI(docs_url=None, redoc_url=None)  # Disable docs in production
+app = FastAPI()
 api_router = APIRouter(prefix="/api")
-
-JWT_ALGORITHM = "HS256"
-MAX_LOGIN_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ─── Security Helpers ───────────────────────────────────────
-
-def get_jwt_secret() -> str:
-    return os.environ["JWT_SECRET"]
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
-
-def create_access_token(user_id: str, email: str) -> str:
-    payload = {"sub": user_id, "email": email, "exp": datetime.now(timezone.utc) + timedelta(minutes=60), "type": "access"}
-    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
-
-def create_refresh_token(user_id: str) -> str:
-    payload = {"sub": user_id, "exp": datetime.now(timezone.utc) + timedelta(days=7), "type": "refresh"}
-    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+# ─── Helpers ────────────────────────────────────────────────
 
 def sanitize(val: str) -> str:
     """Sanitize user input to prevent XSS."""
@@ -71,47 +48,14 @@ def validate_object_id(oid_str: str) -> ObjectId:
 def validate_phone(phone: str) -> bool:
     return bool(re.match(r'^\+91\d{10}$', phone))
 
-def validate_email_format(email: str) -> bool:
-    return bool(re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email))
-
 def serialize_doc(doc: Optional[dict]) -> Optional[dict]:
     if doc is None:
         return None
     doc["id"] = str(doc.pop("_id"))
-    doc.pop("owner_id", None)  # Never expose owner_id to frontend
     return doc
 
 def serialize_list(docs: List[dict]) -> List[dict]:
     return [serialize_doc(d) for d in docs]
-
-def set_auth_cookies(response: Response, access: str, refresh: str) -> None:
-    """Set httpOnly auth cookies with secure defaults."""
-    is_https = os.environ.get("FRONTEND_URL", "").startswith("https")
-    response.set_cookie(key="access_token", value=access, httponly=True, secure=is_https, samesite="lax", max_age=3600, path="/")
-    response.set_cookie(key="refresh_token", value=refresh, httponly=True, secure=is_https, samesite="lax", max_age=604800, path="/")
-
-async def get_current_user(request: Request) -> dict:
-    token = request.cookies.get("access_token")
-    if not token:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        user["_id"] = str(user["_id"])
-        user.pop("password_hash", None)
-        return user
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
 
 async def find_booking_or_404(booking_id: str) -> dict:
     oid = validate_object_id(booking_id)
@@ -120,60 +64,7 @@ async def find_booking_or_404(booking_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Booking not found")
     return booking
 
-async def check_brute_force(ip: str, email: str) -> None:
-    """Check and enforce brute force lockout."""
-    identifier = f"{ip}:{email}"
-    attempt = await db.login_attempts.find_one({"identifier": identifier})
-    if attempt and attempt.get("count", 0) >= MAX_LOGIN_ATTEMPTS:
-        locked_until = attempt.get("locked_until")
-        if locked_until and datetime.now(timezone.utc) < datetime.fromisoformat(locked_until):
-            raise HTTPException(status_code=429, detail=f"Too many failed attempts. Try again in {LOCKOUT_MINUTES} minutes.")
-        else:
-            await db.login_attempts.delete_one({"identifier": identifier})
-
-async def record_failed_login(ip: str, email: str) -> None:
-    identifier = f"{ip}:{email}"
-    await db.login_attempts.update_one(
-        {"identifier": identifier},
-        {"$inc": {"count": 1}, "$set": {"locked_until": (datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()}},
-        upsert=True
-    )
-
-async def clear_failed_logins(ip: str, email: str) -> None:
-    await db.login_attempts.delete_one({"identifier": f"{ip}:{email}"})
-
 # ─── Models with Validation ─────────────────────────────────
-
-class LoginInput(BaseModel):
-    email: str
-    password: str
-
-class RegisterInput(BaseModel):
-    name: str
-    email: str
-    password: str
-    business_name: Optional[str] = "My Salon"
-
-    @field_validator('email')
-    @classmethod
-    def validate_email(cls, v):
-        if not validate_email_format(v.strip().lower()):
-            raise ValueError('Invalid email format')
-        return v.strip().lower()
-
-    @field_validator('password')
-    @classmethod
-    def validate_password(cls, v):
-        if len(v) < 6:
-            raise ValueError('Password must be at least 6 characters')
-        return v
-
-    @field_validator('name')
-    @classmethod
-    def validate_name(cls, v):
-        if not v or len(v.strip()) < 1:
-            raise ValueError('Name is required')
-        return sanitize(v)
 
 class SettingsInput(BaseModel):
     business_name: Optional[str] = "LuxeSalon"
@@ -267,173 +158,94 @@ class MockPaymentInput(BaseModel):
     booking_id: str
     amount: float
 
-# ─── Auth (with brute force protection) ─────────────────────
+# ─── Settings (singleton document) ───────────────────────────
 
-@api_router.post("/auth/login")
-async def login(input: LoginInput, request: Request, response: Response) -> dict:
-    email = input.email.strip().lower()
-    client_ip = request.client.host if request.client else "unknown"
-    await check_brute_force(client_ip, email)
-    user = await db.users.find_one({"email": email})
-    if not user or not verify_password(input.password, user["password_hash"]):
-        await record_failed_login(client_ip, email)
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    await clear_failed_logins(client_ip, email)
-    uid = str(user["_id"])
-    access = create_access_token(uid, email)
-    refresh = create_refresh_token(uid)
-    set_auth_cookies(response, access, refresh)
-    return {"id": uid, "email": user["email"], "name": user.get("name", ""), "role": user.get("role", "admin"), "token": access}
-
-@api_router.post("/auth/register")
-async def register(input: RegisterInput, response: Response) -> dict:
-    email = input.email.strip().lower()
-    existing = await db.users.find_one({"email": email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    user_doc = {
-        "email": email,
-        "password_hash": hash_password(input.password),
-        "name": sanitize(input.name),
-        "role": "admin",
-        "payment_plan": "free_trial",
-        "plan_start_date": datetime.now(timezone.utc).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    result = await db.users.insert_one(user_doc)
-    uid = str(result.inserted_id)
-    biz_name = sanitize(input.business_name or "My Salon")
-    await db.settings.insert_one({
-        "owner_id": uid,
-        "business_name": biz_name,
-        "business_email": email,
-        "business_webpage": "",
-        "theme": "earthy-minimal"
-    })
-    await db.profiles.insert_one({
-        "owner_id": uid,
-        "user_id": uid,
-        "name": sanitize(input.name),
-        "email": email,
-        "payment_plan": "Free Trial (1 month)",
-        "payment_details": ""
-    })
-    access = create_access_token(uid, email)
-    refresh = create_refresh_token(uid)
-    set_auth_cookies(response, access, refresh)
-    logger.info(f"New user registered: {email}")
-    return {"id": uid, "email": email, "name": sanitize(input.name), "role": "admin", "token": access}
-
-@api_router.post("/auth/logout")
-async def logout(response: Response) -> dict:
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
-    return {"message": "Logged out"}
-
-@api_router.get("/auth/me")
-async def get_me(user=Depends(get_current_user)) -> dict:
-    return {"id": user["_id"], "email": user["email"], "name": user.get("name", ""), "role": user.get("role", "admin")}
-
-# ─── Settings (RLS: owner_id scoped) ────────────────────────
+DEFAULT_SETTINGS = {
+    "business_name": "LuxeSalon",
+    "business_email": "",
+    "business_webpage": "",
+    "theme": "earthy-minimal",
+}
 
 @api_router.get("/settings")
-async def get_settings(owner: Optional[str] = None) -> dict:
-    """Public: requires owner param. Without it, returns defaults."""
-    query = {"owner_id": owner} if owner else {}
-    s = await db.settings.find_one(query, {"_id": 0, "owner_id": 0})
+async def get_settings() -> dict:
+    s = await db.settings.find_one({}, {"_id": 0})
     if not s:
-        s = {"business_name": "LuxeSalon", "business_email": "", "business_webpage": "", "theme": "earthy-minimal"}
-    return s
-
-@api_router.get("/settings/me")
-async def get_my_settings(user=Depends(get_current_user)) -> dict:
-    """Auth: get current user's settings."""
-    s = await db.settings.find_one({"owner_id": user["_id"]}, {"_id": 0, "owner_id": 0})
-    if not s:
-        s = {"business_name": "LuxeSalon", "business_email": "", "business_webpage": "", "theme": "earthy-minimal"}
+        s = dict(DEFAULT_SETTINGS)
     return s
 
 @api_router.put("/settings")
-async def update_settings(inp: SettingsInput, user=Depends(get_current_user)) -> dict:
+async def update_settings(inp: SettingsInput) -> dict:
     data = {k: sanitize(v) if isinstance(v, str) else v for k, v in inp.model_dump().items()}
-    await db.settings.update_one({"owner_id": user["_id"]}, {"$set": data}, upsert=True)
+    await db.settings.update_one({}, {"$set": data}, upsert=True)
     return data
 
-# ─── Profile (RLS: owner_id scoped) ─────────────────────────
+# ─── Profile (singleton document) ───────────────────────────
+
+DEFAULT_PROFILE = {
+    "name": "Admin",
+    "email": "",
+    "payment_plan": "Free Trial",
+    "payment_details": "",
+}
 
 @api_router.get("/profile")
-async def get_profile(user=Depends(get_current_user)) -> dict:
-    p = await db.profiles.find_one({"owner_id": user["_id"]}, {"_id": 0, "owner_id": 0})
+async def get_profile() -> dict:
+    p = await db.profiles.find_one({}, {"_id": 0})
     if not p:
-        p = {"user_id": user["_id"], "name": user.get("name", ""), "email": user.get("email", ""), "payment_plan": "Free", "payment_details": ""}
+        p = dict(DEFAULT_PROFILE)
     return p
 
 @api_router.put("/profile")
-async def update_profile(inp: ProfileInput, user=Depends(get_current_user)) -> dict:
+async def update_profile(inp: ProfileInput) -> dict:
     data = {k: sanitize(v) if isinstance(v, str) else v for k, v in inp.model_dump().items()}
-    data["user_id"] = user["_id"]
-    await db.profiles.update_one({"owner_id": user["_id"]}, {"$set": data}, upsert=True)
+    await db.profiles.update_one({}, {"$set": data}, upsert=True)
     return data
 
-# ─── Locations (RLS: owner_id scoped) ───────────────────────
+# ─── Locations ──────────────────────────────────────────────
 
 @api_router.get("/locations")
-async def get_locations(owner: Optional[str] = None) -> List[dict]:
-    """Public with owner filter for booking page, or returns all for backward compat."""
-    query = {"owner_id": owner} if owner else {}
-    locs = await db.locations.find(query).to_list(1000)
-    return serialize_list(locs)
-
-@api_router.get("/locations/me")
-async def get_my_locations(user=Depends(get_current_user)) -> List[dict]:
-    locs = await db.locations.find({"owner_id": user["_id"]}).to_list(1000)
+async def get_locations() -> List[dict]:
+    locs = await db.locations.find({}).to_list(1000)
     return serialize_list(locs)
 
 @api_router.post("/locations")
-async def create_location(inp: LocationInput, user=Depends(get_current_user)) -> dict:
+async def create_location(inp: LocationInput) -> dict:
     data = {k: sanitize(v) if isinstance(v, str) else v for k, v in inp.model_dump().items()}
-    data["owner_id"] = user["_id"]
     data["created_at"] = datetime.now(timezone.utc).isoformat()
     result = await db.locations.insert_one(data)
     data["id"] = str(result.inserted_id)
     data.pop("_id", None)
-    data.pop("owner_id", None)
     return data
 
 @api_router.put("/locations/{location_id}")
-async def update_location(location_id: str, inp: LocationInput, user=Depends(get_current_user)) -> dict:
+async def update_location(location_id: str, inp: LocationInput) -> dict:
     oid = validate_object_id(location_id)
-    existing = await db.locations.find_one({"_id": oid, "owner_id": user["_id"]})
+    existing = await db.locations.find_one({"_id": oid})
     if not existing:
         raise HTTPException(status_code=404, detail="Location not found")
     data = {k: sanitize(v) if isinstance(v, str) else v for k, v in inp.model_dump().items()}
-    await db.locations.update_one({"_id": oid, "owner_id": user["_id"]}, {"$set": data})
+    await db.locations.update_one({"_id": oid}, {"$set": data})
     data["id"] = location_id
     return data
 
 @api_router.delete("/locations/{location_id}")
-async def delete_location(location_id: str, user=Depends(get_current_user)) -> dict:
+async def delete_location(location_id: str) -> dict:
     oid = validate_object_id(location_id)
-    result = await db.locations.delete_one({"_id": oid, "owner_id": user["_id"]})
+    result = await db.locations.delete_one({"_id": oid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Location not found")
     return {"message": "Deleted"}
 
-# ─── Services (RLS: owner_id scoped) ────────────────────────
+# ─── Services ───────────────────────────────────────────────
 
 @api_router.get("/services")
-async def get_services(owner: Optional[str] = None) -> List[dict]:
-    query = {"owner_id": owner} if owner else {}
-    svcs = await db.services.find(query).to_list(1000)
-    return serialize_list(svcs)
-
-@api_router.get("/services/me")
-async def get_my_services(user=Depends(get_current_user)) -> List[dict]:
-    svcs = await db.services.find({"owner_id": user["_id"]}).to_list(1000)
+async def get_services() -> List[dict]:
+    svcs = await db.services.find({}).to_list(1000)
     return serialize_list(svcs)
 
 @api_router.post("/services")
-async def create_service(inp: ServiceInput, user=Depends(get_current_user)) -> dict:
+async def create_service(inp: ServiceInput) -> dict:
     data = inp.model_dump()
     for ao in data.get("add_ons", []):
         if not ao.get("id"):
@@ -442,86 +254,76 @@ async def create_service(inp: ServiceInput, user=Depends(get_current_user)) -> d
     data["name"] = sanitize(data["name"])
     data["description"] = sanitize(data.get("description", ""))
     data["category"] = sanitize(data.get("category", ""))
-    data["owner_id"] = user["_id"]
     data["created_at"] = datetime.now(timezone.utc).isoformat()
     result = await db.services.insert_one(data)
     data["id"] = str(result.inserted_id)
     data.pop("_id", None)
-    data.pop("owner_id", None)
     return data
 
 @api_router.put("/services/{service_id}")
-async def update_service(service_id: str, inp: ServiceInput, user=Depends(get_current_user)) -> dict:
+async def update_service(service_id: str, inp: ServiceInput) -> dict:
     oid = validate_object_id(service_id)
-    existing = await db.services.find_one({"_id": oid, "owner_id": user["_id"]})
+    existing = await db.services.find_one({"_id": oid})
     if not existing:
         raise HTTPException(status_code=404, detail="Service not found")
     data = inp.model_dump()
     for ao in data.get("add_ons", []):
         if not ao.get("id"):
             ao["id"] = str(uuid.uuid4())
-    await db.services.update_one({"_id": oid, "owner_id": user["_id"]}, {"$set": data})
+    await db.services.update_one({"_id": oid}, {"$set": data})
     data["id"] = service_id
     return data
 
 @api_router.delete("/services/{service_id}")
-async def delete_service(service_id: str, user=Depends(get_current_user)) -> dict:
+async def delete_service(service_id: str) -> dict:
     oid = validate_object_id(service_id)
-    result = await db.services.delete_one({"_id": oid, "owner_id": user["_id"]})
+    result = await db.services.delete_one({"_id": oid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Service not found")
     return {"message": "Deleted"}
 
-# ─── Employees (RLS: owner_id scoped) ───────────────────────
+# ─── Employees ──────────────────────────────────────────────
 
 @api_router.get("/employees")
-async def get_employees(owner: Optional[str] = None) -> List[dict]:
-    query = {"owner_id": owner} if owner else {}
-    emps = await db.employees.find(query).to_list(1000)
-    return serialize_list(emps)
-
-@api_router.get("/employees/me")
-async def get_my_employees(user=Depends(get_current_user)) -> List[dict]:
-    emps = await db.employees.find({"owner_id": user["_id"]}).to_list(1000)
+async def get_employees() -> List[dict]:
+    emps = await db.employees.find({}).to_list(1000)
     return serialize_list(emps)
 
 @api_router.post("/employees")
-async def create_employee(inp: EmployeeInput, user=Depends(get_current_user)) -> dict:
+async def create_employee(inp: EmployeeInput) -> dict:
     data = inp.model_dump()
     data["name"] = sanitize(data["name"])
     data["email"] = sanitize(data.get("email", ""))
-    data["owner_id"] = user["_id"]
     data["created_at"] = datetime.now(timezone.utc).isoformat()
     result = await db.employees.insert_one(data)
     data["id"] = str(result.inserted_id)
     data.pop("_id", None)
-    data.pop("owner_id", None)
     return data
 
 @api_router.put("/employees/{employee_id}")
-async def update_employee(employee_id: str, inp: EmployeeInput, user=Depends(get_current_user)) -> dict:
+async def update_employee(employee_id: str, inp: EmployeeInput) -> dict:
     oid = validate_object_id(employee_id)
-    existing = await db.employees.find_one({"_id": oid, "owner_id": user["_id"]})
+    existing = await db.employees.find_one({"_id": oid})
     if not existing:
         raise HTTPException(status_code=404, detail="Employee not found")
     data = inp.model_dump()
-    await db.employees.update_one({"_id": oid, "owner_id": user["_id"]}, {"$set": data})
+    await db.employees.update_one({"_id": oid}, {"$set": data})
     data["id"] = employee_id
     return data
 
 @api_router.delete("/employees/{employee_id}")
-async def delete_employee(employee_id: str, user=Depends(get_current_user)) -> dict:
+async def delete_employee(employee_id: str) -> dict:
     oid = validate_object_id(employee_id)
-    result = await db.employees.delete_one({"_id": oid, "owner_id": user["_id"]})
+    result = await db.employees.delete_one({"_id": oid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Employee not found")
     return {"message": "Deleted"}
 
-# ─── Bookings (RLS: owner_id scoped) ────────────────────────
+# ─── Bookings ───────────────────────────────────────────────
 
 @api_router.get("/bookings")
-async def get_bookings(user=Depends(get_current_user), location_id: Optional[str] = None) -> List[dict]:
-    query = {"owner_id": user["_id"]}
+async def get_bookings(location_id: Optional[str] = None) -> List[dict]:
+    query = {}
     if location_id:
         query["location_id"] = location_id
     bks = await db.bookings.find(query).sort("created_at", -1).to_list(1000)
@@ -530,10 +332,7 @@ async def get_bookings(user=Depends(get_current_user), location_id: Optional[str
 @api_router.post("/bookings")
 async def create_booking(inp: BookingInput) -> dict:
     data = inp.model_dump()
-    # Determine owner from location
-    loc = await db.locations.find_one({"_id": validate_object_id(data["location_id"])})
-    owner_id = loc.get("owner_id", "") if loc else ""
-    data["owner_id"] = owner_id
+    validate_object_id(data["location_id"])
     data["status"] = "confirmed"
     data["payment_status"] = "completed"
     data["created_at"] = datetime.now(timezone.utc).isoformat()
@@ -543,9 +342,9 @@ async def create_booking(inp: BookingInput) -> dict:
     cust["full_name"] = sanitize(cust["full_name"])
     cust["email"] = sanitize(cust.get("email", ""))
     # Save/update customer
-    existing = await db.customers.find_one({"phone": cust["phone"], "owner_id": owner_id})
+    existing = await db.customers.find_one({"phone": cust["phone"]})
     if existing:
-        await db.customers.update_one({"phone": cust["phone"], "owner_id": owner_id}, {"$set": {
+        await db.customers.update_one({"phone": cust["phone"]}, {"$set": {
             "full_name": cust["full_name"],
             "email": cust.get("email", ""),
             "whatsapp": cust["whatsapp"],
@@ -554,7 +353,6 @@ async def create_booking(inp: BookingInput) -> dict:
         data["customer_id"] = str(existing["_id"])
     else:
         cust_doc = {
-            "owner_id": owner_id,
             "full_name": cust["full_name"],
             "phone": cust["phone"],
             "email": cust.get("email", ""),
@@ -572,7 +370,6 @@ async def create_booking(inp: BookingInput) -> dict:
     result = await db.bookings.insert_one(data)
     data["id"] = str(result.inserted_id)
     data.pop("_id", None)
-    data.pop("owner_id", None)
     return data
 
 @api_router.get("/bookings/{booking_id}")
@@ -626,18 +423,18 @@ async def reschedule_booking(booking_id: str, inp: RescheduleInput) -> dict:
     return {"message": "Booking rescheduled", "new_date": inp.new_date, "new_time_slot": inp.new_time_slot}
 
 @api_router.put("/bookings/{booking_id}/admin-cancel")
-async def admin_cancel_booking(booking_id: str, user=Depends(get_current_user)) -> dict:
+async def admin_cancel_booking(booking_id: str) -> dict:
     oid = validate_object_id(booking_id)
-    booking = await db.bookings.find_one({"_id": oid, "owner_id": user["_id"]})
+    booking = await db.bookings.find_one({"_id": oid})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     await db.bookings.update_one({"_id": oid}, {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat(), "cancelled_by": "admin"}})
     return {"message": "Booking cancelled by admin"}
 
 @api_router.put("/bookings/{booking_id}/admin-reschedule")
-async def admin_reschedule_booking(booking_id: str, inp: RescheduleInput, user=Depends(get_current_user)) -> dict:
+async def admin_reschedule_booking(booking_id: str, inp: RescheduleInput) -> dict:
     oid = validate_object_id(booking_id)
-    booking = await db.bookings.find_one({"_id": oid, "owner_id": user["_id"]})
+    booking = await db.bookings.find_one({"_id": oid})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     old_date, old_time = booking.get("date", ""), booking.get("time_slot", "")
@@ -649,18 +446,18 @@ async def admin_reschedule_booking(booking_id: str, inp: RescheduleInput, user=D
     return {"message": "Booking rescheduled by admin"}
 
 @api_router.delete("/bookings/{booking_id}")
-async def delete_booking(booking_id: str, user=Depends(get_current_user)) -> dict:
+async def delete_booking(booking_id: str) -> dict:
     oid = validate_object_id(booking_id)
-    result = await db.bookings.delete_one({"_id": oid, "owner_id": user["_id"]})
+    result = await db.bookings.delete_one({"_id": oid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Booking not found")
     return {"message": "Deleted"}
 
-# ─── Customers (RLS: owner_id scoped) ───────────────────────
+# ─── Customers ──────────────────────────────────────────────
 
 @api_router.get("/customers")
-async def get_customers(user=Depends(get_current_user)) -> List[dict]:
-    custs = await db.customers.find({"owner_id": user["_id"]}).sort("created_at", -1).to_list(1000)
+async def get_customers() -> List[dict]:
+    custs = await db.customers.find({}).sort("created_at", -1).to_list(1000)
     return serialize_list(custs)
 
 # ─── Time Slots ─────────────────────────────────────────────
@@ -725,33 +522,15 @@ async def get_payment_plans() -> List[dict]:
 
 # ─── Seed Data ──────────────────────────────────────────────
 
-async def seed_admin() -> None:
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@salon.com")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    existing = await db.users.find_one({"email": admin_email})
-    if not existing:
-        result = await db.users.insert_one({
-            "email": admin_email, "password_hash": hash_password(admin_password),
-            "name": "Admin", "role": "admin", "created_at": datetime.now(timezone.utc).isoformat()
-        })
-        admin_id = str(result.inserted_id)
-        logger.info(f"Admin user seeded: {admin_email}")
-    else:
-        admin_id = str(existing["_id"])
-        if not verify_password(admin_password, existing["password_hash"]):
-            await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
-    return admin_id
-
-async def seed_settings(admin_id: str) -> None:
-    s = await db.settings.find_one({"owner_id": admin_id})
-    if not s:
+async def seed_settings() -> None:
+    if not await db.settings.find_one({}):
         await db.settings.insert_one({
-            "owner_id": admin_id, "business_name": "LuxeSalon",
+            "business_name": "LuxeSalon",
             "business_email": "contact@luxesalon.com", "business_webpage": "https://luxesalon.com", "theme": "earthy-minimal"
         })
 
-async def seed_locations_and_data(admin_id: str) -> None:
-    loc_count = await db.locations.count_documents({"owner_id": admin_id})
+async def seed_locations_and_data() -> None:
+    loc_count = await db.locations.count_documents({})
     if loc_count > 0:
         return
 
@@ -759,13 +538,13 @@ async def seed_locations_and_data(admin_id: str) -> None:
         return [{"day": d, "start": start if d not in off_days else "00:00", "end": end if d not in off_days else "00:00", "is_off": d in off_days}
                 for d in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]]
 
-    loc1 = await db.locations.insert_one({"owner_id": admin_id, "name": "Downtown Studio", "address": "42, MG Road, Connaught Place, New Delhi - 110001", "services": [], "employees": [], "created_at": datetime.now(timezone.utc).isoformat()})
-    loc2 = await db.locations.insert_one({"owner_id": admin_id, "name": "Bandra West", "address": "15, Hill Road, Bandra West, Mumbai - 400050", "services": [], "employees": [], "created_at": datetime.now(timezone.utc).isoformat()})
+    loc1 = await db.locations.insert_one({"name": "Downtown Studio", "address": "42, MG Road, Connaught Place, New Delhi - 110001", "services": [], "employees": [], "created_at": datetime.now(timezone.utc).isoformat()})
+    loc2 = await db.locations.insert_one({"name": "Bandra West", "address": "15, Hill Road, Bandra West, Mumbai - 400050", "services": [], "employees": [], "created_at": datetime.now(timezone.utc).isoformat()})
     l1, l2 = str(loc1.inserted_id), str(loc2.inserted_id)
 
-    emp1 = await db.employees.insert_one({"owner_id": admin_id, "name": "Priya Sharma", "email": "priya@luxesalon.com", "phone": "+919876543210", "location": l1, "expertise": ["Hair Styling", "Hair Color"], "working_hours": make_hours("09:00", "18:00", ["Sunday"]), "created_at": datetime.now(timezone.utc).isoformat()})
-    emp2 = await db.employees.insert_one({"owner_id": admin_id, "name": "Rahul Verma", "email": "rahul@luxesalon.com", "phone": "+919876543211", "location": l2, "expertise": ["Facial", "Spa Treatment"], "working_hours": make_hours("10:00", "19:00", ["Sunday"]), "created_at": datetime.now(timezone.utc).isoformat()})
-    emp3 = await db.employees.insert_one({"owner_id": admin_id, "name": "Anita Desai", "email": "anita@luxesalon.com", "phone": "+919876543212", "location": l1, "expertise": ["Manicure", "Pedicure", "Nail Art"], "working_hours": make_hours("09:00", "17:00", ["Saturday", "Sunday"]), "created_at": datetime.now(timezone.utc).isoformat()})
+    emp1 = await db.employees.insert_one({"name": "Priya Sharma", "email": "priya@luxesalon.com", "phone": "+919876543210", "location": l1, "expertise": ["Hair Styling", "Hair Color"], "working_hours": make_hours("09:00", "18:00", ["Sunday"]), "created_at": datetime.now(timezone.utc).isoformat()})
+    emp2 = await db.employees.insert_one({"name": "Rahul Verma", "email": "rahul@luxesalon.com", "phone": "+919876543211", "location": l2, "expertise": ["Facial", "Spa Treatment"], "working_hours": make_hours("10:00", "19:00", ["Sunday"]), "created_at": datetime.now(timezone.utc).isoformat()})
+    emp3 = await db.employees.insert_one({"name": "Anita Desai", "email": "anita@luxesalon.com", "phone": "+919876543212", "location": l1, "expertise": ["Manicure", "Pedicure", "Nail Art"], "working_hours": make_hours("09:00", "17:00", ["Saturday", "Sunday"]), "created_at": datetime.now(timezone.utc).isoformat()})
     e1, e2, e3 = str(emp1.inserted_id), str(emp2.inserted_id), str(emp3.inserted_id)
 
     await db.locations.update_one({"_id": loc1.inserted_id}, {"$set": {"employees": [e1, e3]}})
@@ -790,7 +569,6 @@ async def seed_locations_and_data(admin_id: str) -> None:
     ]
     svc_ids = []
     for svc in services_data:
-        svc["owner_id"] = admin_id
         svc["created_at"] = datetime.now(timezone.utc).isoformat()
         r = await db.services.insert_one(svc)
         svc_ids.append(str(r.inserted_id))
@@ -799,26 +577,11 @@ async def seed_locations_and_data(admin_id: str) -> None:
     await db.locations.update_one({"_id": loc2.inserted_id}, {"$set": {"services": svc_ids[:3]}})
 
 async def seed_data() -> None:
-    admin_id = await seed_admin()
-    await seed_settings(admin_id)
-    await seed_locations_and_data(admin_id)
-    # Write test credentials
-    os.makedirs("/app/memory", exist_ok=True)
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@salon.com")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    with open("/app/memory/test_credentials.md", "w") as f:
-        f.write(f"# Test Credentials\n\n## Admin\n- Email: {admin_email}\n- Password: {admin_password}\n- Role: admin\n- Owner ID: {admin_id}\n")
+    await seed_settings()
+    await seed_locations_and_data()
 
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
-    await db.login_attempts.create_index("identifier")
-    await db.locations.create_index("owner_id")
-    await db.services.create_index("owner_id")
-    await db.employees.create_index("owner_id")
-    await db.bookings.create_index("owner_id")
-    await db.customers.create_index("owner_id")
-    await db.settings.create_index("owner_id")
     await seed_data()
 
 app.include_router(api_router)

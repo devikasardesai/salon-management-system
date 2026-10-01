@@ -1,8 +1,7 @@
 import React, { useState } from "react";
-import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useTheme } from "../contexts/ThemeContext";
-import { Calendar, Link2, Scissors, Users, MapPin, UserCircle, Settings, LogOut, Menu, X, Database, ExternalLink, Eye } from "lucide-react";
+import { Calendar, Link2, Scissors, Users, MapPin, UserCircle, Settings, Menu, X, Database, ExternalLink, Eye } from "lucide-react";
 import { Button } from "../components/ui/button";
 
 const navItems = [
@@ -17,16 +16,9 @@ const navItems = [
 ];
 
 export default function AdminLayout() {
-  const { user, logout } = useAuth();
   const { settings } = useTheme();
-  const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  const handleLogout = async () => {
-    await logout();
-    navigate("/admin/login");
-  };
 
   const isAdminActive = location.pathname.startsWith("/admin");
 
@@ -48,7 +40,7 @@ export default function AdminLayout() {
             Admin
           </NavLink>
           <a
-            href={`/book${user?.id ? `?owner=${user.id}` : ""}`}
+            href="/book"
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors duration-200"
@@ -71,7 +63,6 @@ export default function AdminLayout() {
           )}
         </nav>
         <div className="flex-1" />
-        <span className="text-xs text-muted-foreground hidden sm:inline">{user?.email}</span>
       </header>
 
       <div className="flex-1 flex">
@@ -102,12 +93,6 @@ export default function AdminLayout() {
               </NavLink>
             ))}
           </nav>
-          <div className="p-3 border-t border-border">
-            <Button variant="ghost" className="w-full justify-start gap-3 text-sm text-muted-foreground hover:text-foreground" onClick={handleLogout} data-testid="logout-button">
-              <LogOut className="w-4 h-4" />
-              Logout
-            </Button>
-          </div>
         </aside>
         {/* Main */}
         <div className="flex-1 flex flex-col min-w-0">

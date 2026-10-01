@@ -36,18 +36,11 @@ export default function BookingPage() {
   const [phoneError, setPhoneError] = useState("");
   const [whatsappError, setWhatsappError] = useState("");
 
-  // Get owner from URL param for multi-tenant data isolation
-  const ownerParam = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("owner") || "";
-  }, []);
-
   useEffect(() => {
-    const ownerQuery = ownerParam ? `?owner=${ownerParam}` : "";
-    axios.get(`${API}/settings${ownerQuery}`).then((r) => setSettings(r.data)).catch(() => {});
-    axios.get(`${API}/locations${ownerQuery}`).then((r) => setLocations(r.data)).catch(() => {});
-    axios.get(`${API}/services${ownerQuery}`).then((r) => setAllServices(r.data)).catch(() => {});
-  }, [ownerParam]);
+    axios.get(`${API}/settings`).then((r) => setSettings(r.data)).catch(() => {});
+    axios.get(`${API}/locations`).then((r) => setLocations(r.data)).catch(() => {});
+    axios.get(`${API}/services`).then((r) => setAllServices(r.data)).catch(() => {});
+  }, []);
 
   const availableServices = useMemo(() => {
     if (!selectedLocation) return [];

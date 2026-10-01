@@ -24,22 +24,13 @@ export function ThemeProvider({ children }) {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const { data } = await api.get("/settings/me");
+      const { data } = await api.get("/settings");
       setSettings(data);
       if (data.theme && THEMES[data.theme]) {
         setThemeName(data.theme);
       }
     } catch (err) {
-      // Not authenticated yet or settings not created - use public endpoint fallback
-      try {
-        const { data } = await api.get("/settings");
-        setSettings(data);
-        if (data.theme && THEMES[data.theme]) {
-          setThemeName(data.theme);
-        }
-      } catch (e2) {
-        console.warn("Settings fetch failed, using defaults");
-      }
+      console.warn("Settings fetch failed, using defaults");
     }
   }, []);
 

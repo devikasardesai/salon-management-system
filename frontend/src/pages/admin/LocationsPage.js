@@ -20,7 +20,7 @@ export default function LocationsPage() {
   useEffect(() => { fetchAll(); }, []);
 
   const fetchAll = async () => {
-    const [l, s, e] = await Promise.all([api.get("/locations/me"), api.get("/services/me"), api.get("/employees/me")]);
+    const [l, s, e] = await Promise.all([api.get("/locations"), api.get("/services"), api.get("/employees")]);
     setLocations(l.data);
     setServices(s.data);
     setEmployees(e.data);
