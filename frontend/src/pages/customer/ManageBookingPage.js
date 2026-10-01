@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import axios from "axios";
 import { Card, CardContent } from "../../components/ui/card";
@@ -33,9 +33,9 @@ export default function ManageBookingPage() {
   useEffect(() => {
     fetchBooking();
     axios.get(`${API}/settings`).then((r) => setSettings(r.data)).catch(() => {});
-  }, [bookingId]);
+  }, [fetchBooking]);
 
-  const fetchBooking = async () => {
+  const fetchBooking = useCallback(async () => {
     try {
       const { data } = await axios.get(`${API}/bookings/${bookingId}`);
       setBooking(data);
@@ -43,7 +43,7 @@ export default function ManageBookingPage() {
       setError("Booking not found");
     }
     setLoading(false);
-  };
+  }, [bookingId]);
 
   const verifyPhone = () => {
     if (booking?.customer_info?.phone === phone) {

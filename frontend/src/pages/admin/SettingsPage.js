@@ -15,22 +15,14 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    loadData();
+    const loadProfile = async () => {
+      try {
+        const { data: profile } = await api.get("/profile");
+        setPersonalForm({ name: profile.name || "", email: profile.email || "" });
+      } catch (e) {}
+    };
+    loadProfile();
   }, []);
-
-  const loadData = async () => {
-    try {
-      const { data: profile } = await api.get("/profile");
-      setPersonalForm({ name: profile.name || "", email: profile.email || "" });
-    } catch (e) {}
-    if (settings) {
-      setBusinessForm({
-        business_name: settings.business_name || "",
-        business_email: settings.business_email || "",
-        business_webpage: settings.business_webpage || "",
-      });
-    }
-  };
 
   useEffect(() => {
     if (settings) {

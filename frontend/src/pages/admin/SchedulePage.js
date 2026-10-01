@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import api from "../../lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
@@ -31,7 +31,7 @@ export default function SchedulePage() {
 
   useEffect(() => {
     fetchBookings();
-  }, [selectedLocation]);
+  }, [fetchBookings]);
 
   const fetchLocations = async () => {
     try {
@@ -40,13 +40,13 @@ export default function SchedulePage() {
     } catch (e) { console.error(e); }
   };
 
-  const fetchBookings = async () => {
+  const fetchBookings = useCallback(async () => {
     try {
       const params = selectedLocation !== "all" ? { location_id: selectedLocation } : {};
       const { data } = await api.get("/bookings", { params });
       setBookings(data);
     } catch (e) { console.error(e); }
-  };
+  }, [selectedLocation]);
 
   const weekDays = useMemo(() => {
     const start = startOfWeek(currentDate, { weekStartsOn: 1 });
