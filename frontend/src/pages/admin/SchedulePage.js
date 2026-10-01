@@ -25,6 +25,14 @@ export default function SchedulePage() {
   const [timeSlots, setTimeSlots] = useState([]);
   const [actionLoading, setActionLoading] = useState(false);
 
+  const fetchBookings = useCallback(async () => {
+    try {
+      const params = selectedLocation !== "all" ? { location_id: selectedLocation } : {};
+      const { data } = await api.get("/bookings", { params });
+      setBookings(data);
+    } catch (e) { console.error(e); }
+  }, [selectedLocation]);
+
   useEffect(() => {
     fetchLocations();
   }, []);
@@ -39,14 +47,6 @@ export default function SchedulePage() {
       setLocations(data);
     } catch (e) { console.error(e); }
   };
-
-  const fetchBookings = useCallback(async () => {
-    try {
-      const params = selectedLocation !== "all" ? { location_id: selectedLocation } : {};
-      const { data } = await api.get("/bookings", { params });
-      setBookings(data);
-    } catch (e) { console.error(e); }
-  }, [selectedLocation]);
 
   const weekDays = useMemo(() => {
     const start = startOfWeek(currentDate, { weekStartsOn: 1 });

@@ -30,11 +30,6 @@ export default function ManageBookingPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [settings, setSettings] = useState({ business_name: "LuxeSalon" });
 
-  useEffect(() => {
-    fetchBooking();
-    axios.get(`${API}/settings`).then((r) => setSettings(r.data)).catch(() => {});
-  }, [fetchBooking]);
-
   const fetchBooking = useCallback(async () => {
     try {
       const { data } = await axios.get(`${API}/bookings/${bookingId}`);
@@ -44,6 +39,11 @@ export default function ManageBookingPage() {
     }
     setLoading(false);
   }, [bookingId]);
+
+  useEffect(() => {
+    fetchBooking();
+    axios.get(`${API}/settings`).then((r) => setSettings(r.data)).catch(() => {});
+  }, [fetchBooking]);
 
   const verifyPhone = () => {
     if (booking?.customer_info?.phone === phone) {
